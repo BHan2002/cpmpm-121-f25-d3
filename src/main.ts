@@ -191,17 +191,41 @@ function initMap() {
 
   const gridLayer = L.layerGroup([], { pane: GRID_PANE }).addTo(map);
 
-  // Draw ONE test cell around the classroom
-  const { row, col } = latLngToCell(CLASSROOM.lat, CLASSROOM.lng);
-  const bounds = cellBounds(row, col);
-  L.rectangle(bounds, {
-    pane: GRID_PANE, // <- match the pane name exactly
-    color: "#3388ff",
-    weight: 1,
-    opacity: 0.9,
-    fillOpacity: 0.12,
-    interactive: false,
-  }).addTo(gridLayer);
+  // Draw grid cells covering the screen bounds
+  function drawGridCells() {
+    // Clear existing grid cells
+    gridLayer.clearLayers();
+
+    // Get current map bounds
+    const mapBounds = map.getBounds();
+    const sw = mapBounds.getSouthWest();
+    const ne = mapBounds.getNorthEast();
+
+    // Convert bounds to cell coordinates
+    const { row: minRow, col: minCol } = latLngToCell(sw.lat, sw.lng);
+    const { row: maxRow, col: maxCol } = latLngToCell(ne.lat, ne.lng);
+
+    // Draw all cells within bounds
+    for (let row = minRow; row <= maxRow; row++) {
+      for (let col = minCol; col <= maxCol; col++) {
+        const bounds = cellBounds(row, col);
+        L.rectangle(bounds, {
+          pane: GRID_PANE,
+          color: "#3388ff",
+          weight: 1,
+          opacity: 0.9,
+          fillOpacity: 0.12,
+          interactive: false,
+        }).addTo(gridLayer);
+      }
+    }
+  }
+
+  // Draw initial grid
+  drawGridCells();
+
+  // Redraw grid when map moves or zooms
+  map.on("moveend", drawGridCells);
 
   // --- PLAYER LAYER / BADGE ---
   const player = new PlayerLayer(map);
