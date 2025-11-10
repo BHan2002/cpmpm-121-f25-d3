@@ -25,10 +25,10 @@ Key gameplay challenge: Can players collect and craft tokens from nearby locatio
 - [x] draw the player's location on the map
 - [x] draw a rectangle representing one cell on the map
 - [x] use loops to draw a whole grid of cells on the map
-- [ ] display token values directly on the cells
-- [ ] add deterministic hashing (Luck) for token spawning
-- [ ] allow clicking nearby cells to pick up a token
-- [ ] add player inventory (only one token can be held)
+- [x] display token values directly on the cells
+- [x] add deterministic hashing (Luck) for token spawning
+- [x] allow clicking nearby cells to pick up a token
+- [x] add player inventory (only one token can be held)
 - [ ] implement crafting by merging equal-value tokens
 - [ ] detect win condition when a crafted token reaches value 8 or 16
 - [ ] polish visuals and cell interactions
