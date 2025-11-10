@@ -13,6 +13,26 @@ const CLASSROOM = {
   zoom: 17,
 };
 
+const CELL_DEG = 0.000125; // ~13.9m at this latitude
+
+// convert lat/lng to cell coords
+function latLngToCell(lat: number, lng: number): { row: number; col: number } {
+  const dLat = lat - CLASSROOM.lat;
+  const dLng = lng - CLASSROOM.lng;
+  const row = Math.floor(dLat / CELL_DEG);
+  const col = Math.floor(dLng / CELL_DEG);
+  return { row, col };
+}
+
+// Grid cell bounds from indices
+function cellBounds(row: number, col: number): L.LatLngBounds {
+  const south = CLASSROOM.lat + row * CELL_DEG;
+  const north = CLASSROOM.lat + (row + 1) * CELL_DEG;
+  const west = CLASSROOM.lng + col * CELL_DEG;
+  const east = CLASSROOM.lng + (col + 1) * CELL_DEG;
+  return L.latLngBounds([south, west], [north, east]);
+}
+
 // allow geolocation if you toggle this:
 const USE_GEOLOCATION = false;
 
@@ -163,6 +183,27 @@ function initMap() {
       '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
   }).addTo(map);
 
+  // --- GRID SETUP FIRST (so it runs regardless of geolocation mode) ---
+  const GRID_PANE = "grid-pane";
+  const gridPaneEl = map.createPane(GRID_PANE);
+  // Put grid below markers (markerPane ~600); tiles are ~200
+  gridPaneEl.style.zIndex = "400";
+
+  const gridLayer = L.layerGroup([], { pane: GRID_PANE }).addTo(map);
+
+  // Draw ONE test cell around the classroom
+  const { row, col } = latLngToCell(CLASSROOM.lat, CLASSROOM.lng);
+  const bounds = cellBounds(row, col);
+  L.rectangle(bounds, {
+    pane: GRID_PANE, // <- match the pane name exactly
+    color: "#3388ff",
+    weight: 1,
+    opacity: 0.9,
+    fillOpacity: 0.12,
+    interactive: false,
+  }).addTo(gridLayer);
+
+  // --- PLAYER LAYER / BADGE ---
   const player = new PlayerLayer(map);
   const badge = ensureHudBadge();
 
@@ -170,6 +211,7 @@ function initMap() {
   if (!USE_GEOLOCATION) {
     badge.textContent = "Player: fixed classroom location";
     player.showFixed([CLASSROOM.lat, CLASSROOM.lng]);
+    // NOTE: no early return — we already drew the grid above
     return map;
   }
 
