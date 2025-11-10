@@ -1,115 +1,88 @@
-// @deno-types="npm:@types/leaflet"
-import leaflet from "leaflet";
+// src/main.ts
+// Basic Leaflet map + fixed player location
 
-// Style sheets
-import "leaflet/dist/leaflet.css"; // supporting style for Leaflet
-import "./style.css"; // student-controlled page style
+import * as L from "leaflet";
+import "leaflet/dist/leaflet.css";
 
-// Fix missing marker images
-import "./_leafletWorkaround.ts"; // fixes for missing Leaflet images
-
-// Import our luck function
-import luck from "./_luck.ts";
-
-// Create basic UI elements
-
-const controlPanelDiv = document.createElement("div");
-controlPanelDiv.id = "controlPanel";
-document.body.append(controlPanelDiv);
-
-const mapDiv = document.createElement("div");
-mapDiv.id = "map";
-document.body.append(mapDiv);
-
-const statusPanelDiv = document.createElement("div");
-statusPanelDiv.id = "statusPanel";
-document.body.append(statusPanelDiv);
-
-// Our classroom location
-const CLASSROOM_LATLNG = leaflet.latLng(
-  36.997936938057016,
-  -122.05703507501151,
-);
-
-// Tunable gameplay parameters
-const GAMEPLAY_ZOOM_LEVEL = 19;
-const TILE_DEGREES = 1e-4;
-const NEIGHBORHOOD_SIZE = 8;
-const CACHE_SPAWN_PROBABILITY = 0.1;
-
-// Create the map (element with id "map" is defined in index.html)
-const map = leaflet.map(mapDiv, {
-  center: CLASSROOM_LATLNG,
-  zoom: GAMEPLAY_ZOOM_LEVEL,
-  minZoom: GAMEPLAY_ZOOM_LEVEL,
-  maxZoom: GAMEPLAY_ZOOM_LEVEL,
-  zoomControl: false,
-  scrollWheelZoom: false,
+// --- Fix default marker icon URLs for Vite bundling ---
+import marker2xUrl from "leaflet/dist/images/marker-icon-2x.png";
+import markerUrl from "leaflet/dist/images/marker-icon.png";
+import shadowUrl from "leaflet/dist/images/marker-shadow.png";
+// deno-lint-ignore no-explicit-any
+(L.Icon.Default.prototype as any)._getIconUrl = function () {};
+L.Icon.Default.mergeOptions({
+  iconRetinaUrl: marker2xUrl,
+  iconUrl: markerUrl,
+  shadowUrl: shadowUrl,
 });
 
-// Populate the map with a background tile layer
-leaflet
-  .tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
-    maxZoom: 19,
-    attribution:
-      '&copy; <a href="http://www.openstreetmap.org/copyright">OpenStreetMap</a>',
-  })
-  .addTo(map);
+// --- 1) Choose your fixed "classroom" location (replace with your real lat/lng) ---
+const CLASSROOM = {
+  lat: 36.9916, // placeholder: McHenry Library-ish (UCSC). Change these!
+  lng: -122.0583,
+  zoom: 17,
+};
 
-// Add a marker to represent the player
-const playerMarker = leaflet.marker(CLASSROOM_LATLNG);
-playerMarker.bindTooltip("That's you!");
-playerMarker.addTo(map);
+// --- 2) Ensure a map container exists (full-viewport). If #map doesn't exist, create it. ---
+function ensureMapContainer(): HTMLElement {
+  const existing = document.getElementById("map");
+  if (existing) return existing;
 
-// Display the player's points
-let playerPoints = 0;
-statusPanelDiv.innerHTML = "No points yet...";
-
-// Add caches to the map by cell numbers
-function spawnCache(i: number, j: number) {
-  // Convert cell numbers into lat/lng bounds
-  const origin = CLASSROOM_LATLNG;
-  const bounds = leaflet.latLngBounds([
-    [origin.lat + i * TILE_DEGREES, origin.lng + j * TILE_DEGREES],
-    [origin.lat + (i + 1) * TILE_DEGREES, origin.lng + (j + 1) * TILE_DEGREES],
-  ]);
-
-  // Add a rectangle to the map to represent the cache
-  const rect = leaflet.rectangle(bounds);
-  rect.addTo(map);
-
-  // Handle interactions with the cache
-  rect.bindPopup(() => {
-    // Each cache has a random point value, mutable by the player
-    let pointValue = Math.floor(luck([i, j, "initialValue"].toString()) * 100);
-
-    // The popup offers a description and button
-    const popupDiv = document.createElement("div");
-    popupDiv.innerHTML = `
-                <div>There is a cache here at "${i},${j}". It has value <span id="value">${pointValue}</span>.</div>
-                <button id="poke">poke</button>`;
-
-    // Clicking the button decrements the cache's value and increments the player's points
-    popupDiv
-      .querySelector<HTMLButtonElement>("#poke")!
-      .addEventListener("click", () => {
-        pointValue--;
-        popupDiv.querySelector<HTMLSpanElement>("#value")!.innerHTML =
-          pointValue.toString();
-        playerPoints++;
-        statusPanelDiv.innerHTML = `${playerPoints} points accumulated`;
-      });
-
-    return popupDiv;
+  const el = document.createElement("div");
+  el.id = "map";
+  Object.assign(el.style, {
+    width: "100vw",
+    height: "100vh",
+    margin: "0",
+    padding: "0",
   });
+  document.body.style.margin = "0";
+  document.body.appendChild(el);
+  return el;
 }
 
-// Look around the player's neighborhood for caches to spawn
-for (let i = -NEIGHBORHOOD_SIZE; i < NEIGHBORHOOD_SIZE; i++) {
-  for (let j = -NEIGHBORHOOD_SIZE; j < NEIGHBORHOOD_SIZE; j++) {
-    // If location i,j is lucky enough, spawn a cache!
-    if (luck([i, j].toString()) < CACHE_SPAWN_PROBABILITY) {
-      spawnCache(i, j);
-    }
-  }
+// --- 3) Initialize map ---
+function initMap() {
+  const container = ensureMapContainer();
+
+  const map = L.map(container, {
+    zoomControl: true,
+    attributionControl: true,
+  }).setView([CLASSROOM.lat, CLASSROOM.lng], CLASSROOM.zoom);
+
+  // Tile layer (OpenStreetMap)
+  L.tileLayer(
+    // You can switch to other providers later if you want different styling
+    "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
+    {
+      maxZoom: 19,
+      attribution:
+        '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+    },
+  ).addTo(map);
+
+  // --- 4) Draw the player ("classroom") location ---
+  drawPlayerLocation(map);
+
+  return map;
 }
+
+// --- 5) Player marker + a small radius to make it visually obvious ---
+function drawPlayerLocation(map: L.Map) {
+  const pos: L.LatLngExpression = [CLASSROOM.lat, CLASSROOM.lng];
+
+  // Marker pin
+  L.marker(pos).addTo(map).bindPopup("Player (Classroom)").openPopup();
+
+  // Circle for emphasis (10m-ish visual; adjust as you like)
+  L.circle(pos, {
+    radius: 10, // in meters
+    stroke: true,
+    weight: 2,
+    opacity: 0.8,
+    fillOpacity: 0.15,
+  }).addTo(map);
+}
+
+// Kick it off
+initMap();
