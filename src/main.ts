@@ -113,14 +113,18 @@ function checkWin() {
 }
 
 function saveMemento() {
+  /* Maybe enable later?
   const data = {
     overrides: Array.from(overrides.entries()),
     inventory,
   };
   localStorage.setItem("d3_state", JSON.stringify(data));
+  */
 }
 
 function loadMemento() {
+  /* Maybe enable later? */
+  /*
   const raw = localStorage.getItem("d3_state");
   if (!raw) return;
   try {
@@ -134,6 +138,7 @@ function loadMemento() {
   } catch {
     // ignore corrupt state
   }
+  */
 }
 
 // =======================
@@ -324,9 +329,16 @@ function initMap() {
 
         const rect = L.rectangle(bounds, {
           pane: GRID_PANE,
-          // color by value (optional; uncomment for colors)
-          // color: val === 0 ? "#6c757d" : (val === 2 ? "#4caf50" : val === 4 ? "#2196f3" : val === 8 ? "#9c27b0" : "#ff9800"),
-          color: "#3388ff",
+          color: val === 0
+            ? "#6c757d"
+            : (val === 2
+              ? "#4caf50"
+              : val === 4
+              ? "#2196f3"
+              : val === 8
+              ? "#9c27b0"
+              : "#ff9800"),
+          //color: "#3388ff",
           weight: 1,
           opacity: rangeOK ? 0.9 : 0.25,
           fillOpacity: val > 0 ? (rangeOK ? 0.18 : 0.08) : 0.04,
