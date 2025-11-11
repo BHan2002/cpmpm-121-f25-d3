@@ -29,7 +29,7 @@ Key gameplay challenge: Can players collect and craft tokens from nearby locatio
 - [x] add deterministic hashing (Luck) for token spawning
 - [x] allow clicking nearby cells to pick up a token
 - [x] add player inventory (only one token can be held)
-- [ ] implement crafting by merging equal-value tokens
-- [ ] detect win condition when a crafted token reaches value 8 or 16
+- [x] implement crafting by merging equal-value tokens
+- [x] detect win condition when a crafted token reaches value 8 or 16
 - [ ] polish visuals and cell interactions
 - [ ] test persistence and determinism across reloads

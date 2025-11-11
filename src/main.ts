@@ -19,7 +19,8 @@ const CLASSROOM = {
 const CELL_DEG = 0.000125; // ~13.9m at this latitude
 const INTERACT_RANGE = 3; // cells (Chebyshev distance)
 const TARGET = 16; // win threshold
-const USE_GEOLOCATION = false; // optional
+const USE_GEOLOCATION = false;
+const MERGE_RESULT_IN_HAND = true;
 
 // =======================
 // Grid helpers
@@ -365,33 +366,44 @@ function initMap() {
         updateInventoryHUD();
         saveMemento();
         drawGridCells();
+        checkWin();
       }
       return;
     }
 
-    // B) Merge equal
+    // Case B: holding a token
     const held = inventory.value;
+
+    // Only allow crafting when equal values
     if (cellVal === held && held > 0) {
       const newVal = held * 2;
-      setEffectiveValue(row, col, newVal); // result stays in cell
-      inventory = null; // hand empty
+
+      if (MERGE_RESULT_IN_HAND) {
+        // Result goes to hand; cell becomes empty
+        setEffectiveValue(row, col, 0);
+        inventory = { value: newVal };
+      } else {
+        // Result stays in the cell; hand becomes empty (your previous behavior)
+        setEffectiveValue(row, col, newVal);
+        inventory = null;
+      }
+
       updateInventoryHUD();
       saveMemento();
       drawGridCells();
-      if (newVal >= TARGET) {
-        alert(`🎉 Crafted ${newVal}! (Win threshold ${TARGET})`);
-      }
-      return;
+
+      // Win check is about the HAND, so only triggers if result is in-hand
+      checkWin();
     }
 
     // (Optional) place into empty cells:
-    // if (cellVal === 0) {
-    //   setEffectiveValue(row, col, held);
-    //   inventory = null;
-    //   updateInventoryHUD();
-    //   saveMemento();
-    //   drawGridCells();
-    // }
+    if (cellVal === 0) {
+      setEffectiveValue(row, col, held);
+      inventory = null;
+      updateInventoryHUD();
+      saveMemento();
+      drawGridCells();
+    }
   }
 
   // initial draw + redraw on move
