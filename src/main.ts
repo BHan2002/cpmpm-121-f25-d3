@@ -13,7 +13,7 @@ import luck from "./_luck.ts";
 const CLASSROOM = {
   lat: 36.99785920944698,
   lng: -122.05683743811225,
-  zoom: 17,
+  zoom: 18.75,
 };
 
 const CELL_DEG = 0.000125; // ~13.9m at this latitude
@@ -41,11 +41,142 @@ function cellBounds(row: number, col: number): L.LatLngBounds {
   return L.latLngBounds([south, west], [north, east]);
 }
 
-const originCell = latLngToCell(CLASSROOM.lat, CLASSROOM.lng);
+let playerCell = latLngToCell(CLASSROOM.lat, CLASSROOM.lng); // NEW
 function inRange(row: number, col: number): boolean {
-  const dr = Math.abs(row - originCell.row);
-  const dc = Math.abs(col - originCell.col);
+  const dr = Math.abs(row - playerCell.row);
+  const dc = Math.abs(col - playerCell.col);
   return Math.max(dr, dc) <= INTERACT_RANGE;
+}
+
+// Helper: center of a grid cell (lat/lng)
+function cellCenterLatLng(row: number, col: number): L.LatLng { // NEW
+  return cellBounds(row, col).getCenter();
+}
+
+// Canvas renderer for all grid rectangles
+const canvasRenderer = L.canvas();
+
+// Here is a pool of visible cells
+type CellKey = string; // "row:col"
+const visibleCells = new Map<CellKey, CellView>();
+
+function keyOf(row: number, col: number): CellKey {
+  return `${row}:${col}`;
+}
+
+// forward declaration for handler (will be assigned inside initMap)
+let handleCellClick: (row: number, col: number) => void = () => {};
+
+// Class for cell views
+class CellView {
+  private map: L.Map;
+  rect: L.Rectangle;
+  label: L.Marker | null = null;
+  row: number;
+  col: number;
+  value: number = 0;
+  inRange: boolean = false;
+
+  constructor(
+    row: number,
+    col: number,
+    pane: string,
+    layerGroup: L.LayerGroup,
+    map: L.Map,
+  ) {
+    this.row = row;
+    this.col = col;
+    this.rect = L.rectangle(cellBounds(row, col), {
+      pane,
+      renderer: canvasRenderer,
+      weight: 1,
+      interactive: true,
+    });
+    this.rect.addTo(layerGroup);
+    this.map = map;
+    // Handle clicks
+    this.rect.on("click", () => {
+      handleCellClick(this.row, this.col);
+    });
+  }
+  setValue(value: number, rangeOK: boolean, layerGroup: L.LayerGroup) {
+    this.value = value;
+    this.inRange = rangeOK;
+
+    const color = value === 0
+      ? "#000000"
+      : value === 2
+      ? "#4caf50"
+      : value === 4
+      ? "#2196f3"
+      : value === 8
+      ? "#9c27b0"
+      : value === 16
+      ? "#ff9800"
+      : "#f44336";
+
+    this.rect.setStyle({
+      color: color,
+      opacity: rangeOK ? 0.9 : 0.25,
+      fillOpacity: value > 0 ? (rangeOK ? 0.18 : 0.08) : 0.04,
+    });
+
+    // Label(DivIcon) - create only for >0 values else remove if present
+    const bounds = cellBounds(this.row, this.col);
+    const center = this.pixelCenterOfBounds(bounds);
+
+    if (value > 0) {
+      if (!this.label) {
+        this.label = L.marker(center, {
+          interactive: false,
+          pane: this.rect.options.pane,
+          icon: L.divIcon({
+            className: "cell-label",
+            html: `<span class="cell-label-inner">${value}</span>`,
+            iconSize: [0, 0],
+            iconAnchor: [0, 0],
+          }),
+        }).addTo(layerGroup);
+      } else {
+        this.label.setLatLng(center);
+        const el = this.label.getElement() as HTMLElement | null;
+        if (el) {
+          (el.querySelector(".cell-label-inner") as HTMLElement).textContent =
+            String(value);
+        }
+      }
+      const el = this.label.getElement() as HTMLElement | null;
+      if (el) el.style.opacity = rangeOK ? "1" : "0.5";
+    } else {
+      if (this.label) {
+        layerGroup.removeLayer(this.label);
+        this.label = null;
+      }
+    }
+  }
+
+  private pixelCenterOfBounds(b: L.LatLngBounds): L.LatLng {
+    const sw = this.map.project(b.getSouthWest());
+    const ne = this.map.project(b.getNorthEast());
+    const cx = (sw.x + ne.x) / 2;
+    const cy = (sw.y + ne.y) / 2;
+    return this.map.unproject(L.point(cx, cy));
+  }
+
+  updateBounds() {
+    const bounds = cellBounds(this.row, this.col);
+    this.rect.setBounds(bounds);
+    if (this.label) {
+      this.label.setLatLng(this.pixelCenterOfBounds(bounds));
+    }
+  }
+
+  destroy(layerGroup: L.LayerGroup) {
+    layerGroup.removeLayer(this.rect);
+    if (this.label) {
+      layerGroup.removeLayer(this.label);
+    }
+  }
 }
 
 // =======================
@@ -310,62 +441,95 @@ function initMap() {
 
   const gridLayer = L.layerGroup([], { pane: GRID_PANE }).addTo(map);
 
-  // Draw grid covering viewport
-  function drawGridCells() {
-    gridLayer.clearLayers();
+  // Track which cells are visible
+  function visibleCellRange(): {
+    minRow: number;
+    maxRow: number;
+    minCol: number;
+    maxCol: number;
+  } {
+    const bounds = map.getBounds();
+    const sw = bounds.getSouthWest();
+    const ne = bounds.getNorthEast();
+    const a = latLngToCell(sw.lat, sw.lng);
+    const z = latLngToCell(ne.lat, ne.lng);
+    return {
+      minRow: Math.min(a.row, z.row),
+      maxRow: Math.max(a.row, z.row),
+      minCol: Math.min(a.col, z.col),
+      maxCol: Math.max(a.col, z.col),
+    };
+  }
+  // Create/update only what’s needed; remove scrolled-out cells
+  function syncGridToViewport() {
+    const { minRow, maxRow, minCol, maxCol } = visibleCellRange();
 
-    const mapBounds = map.getBounds();
-    const sw = mapBounds.getSouthWest();
-    const ne = mapBounds.getNorthEast();
-
-    const { row: minRow, col: minCol } = latLngToCell(sw.lat, sw.lng);
-    const { row: maxRow, col: maxCol } = latLngToCell(ne.lat, ne.lng);
+    // mark all existing as stale
+    const stale = new Set(visibleCells.keys());
 
     for (let row = minRow; row <= maxRow; row++) {
       for (let col = minCol; col <= maxCol; col++) {
-        const bounds = cellBounds(row, col);
-        const val = getEffectiveValue(row, col);
-        const rangeOK = inRange(row, col);
+        const kk = keyOf(row, col);
+        stale.delete(kk);
 
-        const rect = L.rectangle(bounds, {
-          pane: GRID_PANE,
-          color: val === 0
-            ? "#6c757d"
-            : (val === 2
-              ? "#4caf50"
-              : val === 4
-              ? "#2196f3"
-              : val === 8
-              ? "#9c27b0"
-              : "#ff9800"),
-          //color: "#3388ff",
-          weight: 1,
-          opacity: rangeOK ? 0.9 : 0.25,
-          fillOpacity: val > 0 ? (rangeOK ? 0.18 : 0.08) : 0.04,
-          interactive: true,
-        }).addTo(gridLayer);
-
-        // Label (skip zeros to reduce clutter)
-        if (val > 0) {
-          const center = bounds.getCenter();
-          L.tooltip({
-            permanent: true,
-            direction: "center",
-            className: "cell-label",
-            opacity: rangeOK ? 0.9 : 0.45,
-            offset: [0, 0],
-          })
-            .setContent(String(val))
-            .setLatLng(center)
-            .addTo(gridLayer);
+        let cv = visibleCells.get(kk);
+        if (!cv) {
+          cv = new CellView(row, col, GRID_PANE, gridLayer, map);
+          visibleCells.set(kk, cv);
+        } else {
+          // bounds may shift slightly on zoom due to projection
+          cv.updateBounds();
         }
 
-        rect.on("click", () => handleCellClick(row, col));
+        // compute and set cell visual state
+        const val = getEffectiveValue(row, col);
+        const rangeOK = inRange(row, col);
+        cv.setValue(val, rangeOK, gridLayer);
       }
+    }
+
+    // remove any stale cells not in viewport
+    for (const kk of stale) {
+      const cv = visibleCells.get(kk)!;
+      cv.destroy(gridLayer);
+      visibleCells.delete(kk);
     }
   }
 
-  function handleCellClick(row: number, col: number) {
+  // initial draw + light throttling on move/zoom
+  syncGridToViewport();
+
+  function refreshVisibleCells() { // NEW
+    for (const [kk, cv] of visibleCells) {
+      const [rStr, cStr] = kk.split(":");
+      const r = parseInt(rStr, 10);
+      const c = parseInt(cStr, 10);
+      const val = getEffectiveValue(r, c);
+      cv.setValue(val, inRange(r, c), gridLayer);
+    }
+  }
+
+  let redrawTimer: number | undefined;
+  function scheduleSync() {
+    if (redrawTimer) return;
+    redrawTimer = self.setTimeout(() => {
+      redrawTimer = undefined;
+      syncGridToViewport();
+    }, 16); // ~1 frame
+  }
+  map.on("move", scheduleSync);
+  map.on("moveend", syncGridToViewport);
+
+  function updateCell(row: number, col: number) {
+    const kk = keyOf(row, col);
+    const cv = visibleCells.get(kk);
+    if (!cv) return;
+    const val = getEffectiveValue(row, col);
+    cv.setValue(val, inRange(row, col), gridLayer);
+  }
+
+  // cell click handler (separate from updateCell so scope stays correct)
+  handleCellClick = (row: number, col: number) => {
     if (!inRange(row, col)) return;
 
     const cellVal = getEffectiveValue(row, col);
@@ -377,65 +541,89 @@ function initMap() {
         setEffectiveValue(row, col, 0);
         updateInventoryHUD();
         saveMemento();
-        drawGridCells();
+        updateCell(row, col);
         checkWin();
       }
       return;
     }
 
-    // Case B: holding a token
+    // B) Merge equal
     const held = inventory.value;
-
-    // Only allow crafting when equal values
     if (cellVal === held && held > 0) {
       const newVal = held * 2;
 
       if (MERGE_RESULT_IN_HAND) {
-        // Result goes to hand; cell becomes empty
         setEffectiveValue(row, col, 0);
         inventory = { value: newVal };
       } else {
-        // Result stays in the cell; hand becomes empty (your previous behavior)
         setEffectiveValue(row, col, newVal);
         inventory = null;
       }
 
       updateInventoryHUD();
       saveMemento();
-      drawGridCells();
-
-      // Win check is about the HAND, so only triggers if result is in-hand
+      updateCell(row, col); // <— only this cell changes visually
       checkWin();
+      return;
     }
 
-    // (Optional) place into empty cells:
+    // place into empty cells
     if (cellVal === 0) {
       setEffectiveValue(row, col, held);
       inventory = null;
       updateInventoryHUD();
       saveMemento();
-      drawGridCells();
+      updateCell(row, col);
     }
-  }
+  };
 
   // initial draw + redraw on move
-  drawGridCells();
-  map.on("moveend", drawGridCells);
+  syncGridToViewport();
+  map.on("moveend", syncGridToViewport);
 
   // --- PLAYER LAYER / BADGE ---
   const player = new PlayerLayer(map);
   const badge = ensureHudBadge();
 
-  if (!USE_GEOLOCATION) {
-    badge.textContent = "Player: fixed classroom location";
-    player.showFixed([CLASSROOM.lat, CLASSROOM.lng]);
-    return map;
+  function movePlayer(dx: number, dy: number) { // NEW
+    // Only used in simulation mode; works either way but makes most sense when USE_GEOLOCATION=false
+    playerCell = { row: playerCell.row + dy, col: playerCell.col + dx };
+
+    // Move the player marker to the *center of the new cell*
+    const newLL = cellCenterLatLng(playerCell.row, playerCell.col);
+    player.showFixed(newLL);
+
+    // Keep camera on player (optional)
+    map.panTo(newLL, { animate: true });
+
+    // Update badge
+    const cellTxt = `(${playerCell.row}, ${playerCell.col})`;
+    badge.textContent = `Player: simulated @ cell ${cellTxt}`;
+
+    // Redraw grid styling for in-range state
+    refreshVisibleCells();
   }
 
-  if (!("geolocation" in navigator)) {
+  if (!USE_GEOLOCATION) {
+    badge.textContent =
+      `Player: simulated @ cell (${playerCell.row}, ${playerCell.col})`;
+    player.showFixed([CLASSROOM.lat, CLASSROOM.lng]);
+  } else if (!("geolocation" in navigator)) {
     badge.textContent = "Geolocation unavailable — using classroom location";
     player.showFixed([CLASSROOM.lat, CLASSROOM.lng]);
-    return map;
+  } else {
+    badge.textContent = "Player: geolocation (awaiting fix…)";
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        badge.textContent = "Player: geolocation (fixed)";
+        player.showGeo(pos);
+      },
+      () => {
+        badge.textContent = "Geolocation denied — using classroom location";
+        player.showFixed([CLASSROOM.lat, CLASSROOM.lng]);
+      },
+      { enableHighAccuracy: true, timeout: 8000, maximumAge: 0 },
+    );
   }
 
   badge.textContent = "Player: geolocation (awaiting fix…)";
@@ -461,6 +649,62 @@ function initMap() {
   );
 
   checkWin();
+
+  // D-pad control (Leaflet Control) — NEW
+  const MoveControl = L.Control.extend({
+    onAdd: function () {
+      const div = L.DomUtil.create("div", "leaflet-bar");
+      div.style.background = "#fff";
+      div.style.padding = "6px";
+      div.style.borderRadius = "8px";
+      div.style.boxShadow = "0 2px 6px rgba(0,0,0,0.2)";
+      div.style.userSelect = "none";
+
+      const makeBtn = (label: string, onClick: () => void) => {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.textContent = label;
+        Object.assign(b.style, {
+          display: "block",
+          width: "36px",
+          height: "28px",
+          margin: "2px auto",
+          border: "1px solid #ccc",
+          borderRadius: "6px",
+          background: "#f7f7f7",
+          cursor: "pointer",
+        } as CSSStyleDeclaration);
+        L.DomEvent.disableClickPropagation(b);
+        b.addEventListener("click", (e) => {
+          e.preventDefault();
+          onClick();
+        });
+        return b;
+      };
+
+      // Layout:
+      //   [ N ]
+      // [ W ][ S ][ E ]  (S in the middle row for compactness)
+      div.appendChild(makeBtn("N", () => movePlayer(0, 1)));
+      const row = document.createElement("div");
+      row.style.display = "flex";
+      row.style.gap = "4px";
+      row.style.justifyContent = "center";
+      row.appendChild(makeBtn("W", () => movePlayer(-1, 0)));
+      row.appendChild(makeBtn("S", () => movePlayer(0, -1)));
+      row.appendChild(makeBtn("E", () => movePlayer(1, 0)));
+      div.appendChild(row);
+
+      // Disable map drag when pressing on control
+      L.DomEvent.disableClickPropagation(div);
+      return div;
+    },
+    onRemove: function () {},
+  });
+
+  // deno-lint-ignore no-explicit-any
+  const moveCtl = new (MoveControl as any)({ position: "bottomright" });
+  map.addControl(moveCtl);
 
   return map;
 }

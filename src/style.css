@@ -10,3 +10,20 @@
   width: 100%;
   height: 80vh;
 }
+
+.cell-label {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  color: #111;
+  font: 11px/1.2 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  text-shadow: 0 0 2px rgba(255, 255, 255, 0.9);
+  pointer-events: none;
+  /* container is 0x0; inner will center itself */
+}
+.cell-label-inner {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  white-space: nowrap;
+}

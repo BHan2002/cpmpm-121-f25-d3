@@ -41,8 +41,8 @@ Key gameplay challenge: Allow player movement and world exploration while mainta
 
 ### D3.b Steps
 
-- [ ] Add player movement simulation buttons (N/S/E/W)
-- [ ] Implement `movePlayer(dx, dy)` logic to change player’s cell position
+- [x] Add player movement simulation buttons (N/S/E/W)
+- [x] Implement `movePlayer(dx, dy)` logic to change player’s cell position
 - [ ] Refactor world grid to be Earth-anchored at (0,0) latitude and longitude
 - [ ] Use player position as the center for visible cell range and interactions
 - [ ] Update grid spawning logic to dynamically create/destroy cells as the player moves
