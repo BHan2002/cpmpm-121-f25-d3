@@ -43,10 +43,8 @@ Key gameplay challenge: Allow player movement and world exploration while mainta
 
 - [x] Add player movement simulation buttons (N/S/E/W)
 - [x] Implement `movePlayer(dx, dy)` logic to change player’s cell position
-- [ ] Refactor world grid to be Earth-anchored at (0,0) latitude and longitude
-- [ ] Use player position as the center for visible cell range and interactions
-- [ ] Update grid spawning logic to dynamically create/destroy cells as the player moves
-- [ ] Implement “memoryless” behavior (cells reset when out of view)
+- [x] Use player position as the center for visible cell range and interactions
+- [x] Update grid spawning logic to dynamically create/destroy cells as the player moves
 - [ ] Extend crafting threshold (e.g., value 32 or higher triggers win)
 
 ### Software Requirements

@@ -21,6 +21,8 @@ const INTERACT_RANGE = 3; // cells (Chebyshev distance)
 const TARGET = 16; // win threshold
 const USE_GEOLOCATION = false;
 const MERGE_RESULT_IN_HAND = true;
+const RENDER_RADIUS = INTERACT_RANGE + 6;
+const MEMORYLESS = true;
 
 // =======================
 // Grid helpers
@@ -442,29 +444,24 @@ function initMap() {
   const gridLayer = L.layerGroup([], { pane: GRID_PANE }).addTo(map);
 
   // Track which cells are visible
-  function visibleCellRange(): {
+  function playerVisibleCellRange(): {
     minRow: number;
     maxRow: number;
     minCol: number;
     maxCol: number;
   } {
-    const bounds = map.getBounds();
-    const sw = bounds.getSouthWest();
-    const ne = bounds.getNorthEast();
-    const a = latLngToCell(sw.lat, sw.lng);
-    const z = latLngToCell(ne.lat, ne.lng);
     return {
-      minRow: Math.min(a.row, z.row),
-      maxRow: Math.max(a.row, z.row),
-      minCol: Math.min(a.col, z.col),
-      maxCol: Math.max(a.col, z.col),
+      minRow: playerCell.row - RENDER_RADIUS / 4,
+      maxRow: playerCell.row + RENDER_RADIUS / 4,
+      minCol: playerCell.col - RENDER_RADIUS / 4,
+      maxCol: playerCell.col + RENDER_RADIUS / 4,
     };
   }
-  // Create/update only what’s needed; remove scrolled-out cells
-  function syncGridToViewport() {
-    const { minRow, maxRow, minCol, maxCol } = visibleCellRange();
+  // Create/update only what’s in the player window; remove cells that left it
+  function syncGridToPlayerWindow() {
+    const { minRow, maxRow, minCol, maxCol } = playerVisibleCellRange();
 
-    // mark all existing as stale
+    // mark existing as stale initially
     const stale = new Set(visibleCells.keys());
 
     for (let row = minRow; row <= maxRow; row++) {
@@ -477,27 +474,32 @@ function initMap() {
           cv = new CellView(row, col, GRID_PANE, gridLayer, map);
           visibleCells.set(kk, cv);
         } else {
-          // bounds may shift slightly on zoom due to projection
-          cv.updateBounds();
+          cv.updateBounds(); // projection jitter safety
         }
 
-        // compute and set cell visual state
         const val = getEffectiveValue(row, col);
         const rangeOK = inRange(row, col);
         cv.setValue(val, rangeOK, gridLayer);
       }
     }
 
-    // remove any stale cells not in viewport
+    // remove any cells that are now outside the player window
     for (const kk of stale) {
       const cv = visibleCells.get(kk)!;
       cv.destroy(gridLayer);
       visibleCells.delete(kk);
+
+      // MEMORYLESS: drop any overrides so this cell resets next time we see it
+      if (MEMORYLESS) {
+        const [rStr, cStr] = kk.split(":");
+        const r = parseInt(rStr, 10), c = parseInt(cStr, 10);
+        overrides.delete(k(r, c));
+      }
     }
   }
 
   // initial draw + light throttling on move/zoom
-  syncGridToViewport();
+  syncGridToPlayerWindow();
 
   function refreshVisibleCells() { // NEW
     for (const [kk, cv] of visibleCells) {
@@ -514,11 +516,11 @@ function initMap() {
     if (redrawTimer) return;
     redrawTimer = self.setTimeout(() => {
       redrawTimer = undefined;
-      syncGridToViewport();
+      syncGridToPlayerWindow();
     }, 16); // ~1 frame
   }
   map.on("move", scheduleSync);
-  map.on("moveend", syncGridToViewport);
+  map.on("moveend", syncGridToPlayerWindow);
 
   function updateCell(row: number, col: number) {
     const kk = keyOf(row, col);
@@ -578,14 +580,14 @@ function initMap() {
   };
 
   // initial draw + redraw on move
-  syncGridToViewport();
-  map.on("moveend", syncGridToViewport);
+  syncGridToPlayerWindow();
+  map.on("moveend", syncGridToPlayerWindow);
 
   // --- PLAYER LAYER / BADGE ---
   const player = new PlayerLayer(map);
   const badge = ensureHudBadge();
 
-  function movePlayer(dx: number, dy: number) { // NEW
+  function movePlayer(dx: number, dy: number) {
     // Only used in simulation mode; works either way but makes most sense when USE_GEOLOCATION=false
     playerCell = { row: playerCell.row + dy, col: playerCell.col + dx };
 
@@ -599,6 +601,8 @@ function initMap() {
     // Update badge
     const cellTxt = `(${playerCell.row}, ${playerCell.col})`;
     badge.textContent = `Player: simulated @ cell ${cellTxt}`;
+
+    syncGridToPlayerWindow();
 
     // Redraw grid styling for in-range state
     refreshVisibleCells();
@@ -706,6 +710,7 @@ function initMap() {
   const moveCtl = new (MoveControl as any)({ position: "bottomright" });
   map.addControl(moveCtl);
 
+  syncGridToPlayerWindow();
   return map;
 }
 
