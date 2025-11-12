@@ -45,7 +45,7 @@ Key gameplay challenge: Allow player movement and world exploration while mainta
 - [x] Implement `movePlayer(dx, dy)` logic to change player’s cell position
 - [x] Use player position as the center for visible cell range and interactions
 - [x] Update grid spawning logic to dynamically create/destroy cells as the player moves
-- [ ] Extend crafting threshold (e.g., value 32 or higher triggers win)
+- [x] Extend crafting threshold (e.g., value 32 or higher triggers win)
 
 ### Software Requirements
 

@@ -18,7 +18,7 @@ const CLASSROOM = {
 
 const CELL_DEG = 0.000125; // ~13.9m at this latitude
 const INTERACT_RANGE = 3; // cells (Chebyshev distance)
-const TARGET = 16; // win threshold
+const TARGET = 64; // win threshold
 const USE_GEOLOCATION = false;
 const MERGE_RESULT_IN_HAND = true;
 const RENDER_RADIUS = INTERACT_RANGE + 6;
@@ -115,7 +115,11 @@ class CellView {
       ? "#9c27b0"
       : value === 16
       ? "#ff9800"
-      : "#f44336";
+      : value === 32
+      ? "#e91e63"
+      : value === 64
+      ? "#ffff00"
+      : "#000000";
 
     this.rect.setStyle({
       color: color,
