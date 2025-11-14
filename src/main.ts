@@ -24,6 +24,30 @@ const MERGE_RESULT_IN_HAND = true;
 const RENDER_RADIUS = INTERACT_RANGE + 6;
 const MEMORYLESS = true;
 
+// --- Cell identity & keys ---
+type GridCell = { i: number; j: number };
+type CellKey = string; // "row:col"
+
+function cellKeyFromRC(row: number, col: number): CellKey {
+  return `${row}:${col}`;
+}
+
+/*function keyFromCell(c: GridCell): CellKey {
+  return `${c.i}:${c.j}`;
+}
+
+function parseCellKey(key: CellKey): GridCell {
+  const [i, j] = key.split(":").map((n) => parseInt(n, 10));
+  return { i, j };
+}
+*/
+
+// Only store cells that have been modified by the player.
+// Unmodified cells derive from baseTokenValue(row, col)
+type TokenState = { v: number };
+
+const tokenStore = new Map<CellKey, TokenState>();
+
 // =======================
 // Grid helpers
 // =======================
@@ -58,12 +82,10 @@ function cellCenterLatLng(row: number, col: number): L.LatLng { // NEW
 // Canvas renderer for all grid rectangles
 const canvasRenderer = L.canvas();
 
-// Here is a pool of visible cells
-type CellKey = string; // "row:col"
 const visibleCells = new Map<CellKey, CellView>();
 
 function keyOf(row: number, col: number): CellKey {
-  return `${row}:${col}`;
+  return cellKeyFromRC(row, col);
 }
 
 // forward declaration for handler (will be assigned inside initMap)
@@ -196,17 +218,22 @@ function baseTokenValue(row: number, col: number): number {
   return 0;
 }
 
-const overrides = new Map<string, number>(); // "row:col" -> value
-const k = (row: number, col: number) => `${row}:${col}`;
-
 function getEffectiveValue(row: number, col: number): number {
-  return overrides.has(k(row, col))
-    ? (overrides.get(k(row, col)) as number)
-    : baseTokenValue(row, col);
+  const key = cellKeyFromRC(row, col);
+  const s = tokenStore.get(key);
+  return s ? s.v : baseTokenValue(row, col);
 }
 
 function setEffectiveValue(row: number, col: number, value: number) {
-  overrides.set(k(row, col), value);
+  const key = cellKeyFromRC(row, col);
+  const base = baseTokenValue(row, col);
+
+  // Only store if the cell has diverged from base. If it matches base, drop it.
+  if (value === base) {
+    tokenStore.delete(key);
+  } else {
+    tokenStore.set(key, { v: value });
+  }
   saveMemento();
 }
 
@@ -495,9 +522,7 @@ function initMap() {
 
       // MEMORYLESS: drop any overrides so this cell resets next time we see it
       if (MEMORYLESS) {
-        const [rStr, cStr] = kk.split(":");
-        const r = parseInt(rStr, 10), c = parseInt(cStr, 10);
-        overrides.delete(k(r, c));
+        tokenStore.delete(kk);
       }
     }
   }

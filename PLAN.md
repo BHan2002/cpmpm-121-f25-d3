@@ -57,9 +57,9 @@ off-screen cells. Key gameplay challenge: Cells remember their modified state ev
 
 ### D3.c Steps
 
-- [ ] Define a lightweight GridCell identifier type (e.g., { i: number; j: number } ) and a
+- [x] Define a lightweight GridCell identifier type (e.g., { i: number; j: number } ) and a
       CellKey stringifier.
-- [ ] Create an in-memory Map<CellKey, TokenState> store for modified cells only (unmodified
+- [x] Create an in-memory Map<CellKey, TokenState> store for modified cells only (unmodified
       cells derive from luck ).
 - [ ] Refactor viewport renderer to be purely flyweight: rebuild visible cell views from the store each
       moveend without retaining off-screen views.
@@ -67,7 +67,6 @@ off-screen cells. Key gameplay challenge: Cells remember their modified state ev
       remove -entries) and refresh only affected views.
 - [ ] Add an in-memory Memento (serialize/deserialize functions) for the store; call it when pages of
       cells enter/exit the viewport.
-- [ ] Validate that off-screen cells fre
 
 ### Software Requirements
 
