@@ -47,6 +47,28 @@ Key gameplay challenge: Allow player movement and world exploration while mainta
 - [x] Update grid spawning logic to dynamically create/destroy cells as the player moves
 - [x] Extend crafting threshold (e.g., value 32 or higher triggers win)
 
+## D3.c: Object Persistence
+
+### Key technical challenge
+
+Persist modified cell state efficiently while keeping memory usage low by unloading
+off-screen cells. Key gameplay challenge: Cells remember their modified state even when scrolled off-screen
+(persistence across page loads comes later in D3.d).
+
+### D3.c Steps
+
+- [ ] Define a lightweight GridCell identifier type (e.g., { i: number; j: number } ) and a
+      CellKey stringifier.
+- [ ] Create an in-memory Map<CellKey, TokenState> store for modified cells only (unmodified
+      cells derive from luck ).
+- [ ] Refactor viewport renderer to be purely flyweight: rebuild visible cell views from the store each
+      moveend without retaining off-screen views.
+- [ ] Implement write-through mutations: on pickup/merge/place, update the store (add/update/
+      remove -entries) and refresh only affected views.
+- [ ] Add an in-memory Memento (serialize/deserialize functions) for the store; call it when pages of
+      cells enter/exit the viewport.
+- [ ] Validate that off-screen cells fre
+
 ### Software Requirements
 
 - The interface offers movement buttons (N/S/E/W) to move the player by one grid step.
