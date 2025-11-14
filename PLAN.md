@@ -65,7 +65,7 @@ off-screen cells. Key gameplay challenge: Cells remember their modified state ev
       moveend without retaining off-screen views.
 - [x] Implement write-through mutations: on pickup/merge/place, update the store (add/update/
       remove -entries) and refresh only affected views.
-- [ ] Add an in-memory Memento (serialize/deserialize functions) for the store; call it when pages of
+- [x] Add an in-memory Memento (serialize/deserialize functions) for the store; call it when pages of
       cells enter/exit the viewport.
 
 ### Software Requirements

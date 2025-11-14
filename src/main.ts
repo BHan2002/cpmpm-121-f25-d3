@@ -48,6 +48,32 @@ type TokenState = { v: number };
 
 const tokenStore = new Map<CellKey, TokenState>();
 
+// --- Memento support (in-memory only) ---
+type Memento = {
+  tokens: [CellKey, TokenState][];
+  inventory: { value: number } | null;
+  playerCell: GridCell;
+};
+
+let lastMemento: Memento | null = null;
+
+function serializeState(): Memento {
+  return {
+    tokens: Array.from(tokenStore.entries()),
+    inventory: inventory ? { value: inventory.value } : null,
+    playerCell: { i: playerCell.row, j: playerCell.col },
+  };
+}
+
+function restoreFromMemento(m: Memento) {
+  tokenStore.clear();
+  for (const [key, state] of m.tokens) {
+    tokenStore.set(key, { v: state.v });
+  }
+  inventory = m.inventory ? { value: m.inventory.value } : null;
+  playerCell = { row: m.playerCell.i, col: m.playerCell.j };
+}
+
 // =======================
 // Grid helpers
 // =======================
@@ -272,32 +298,13 @@ function checkWin() {
 }
 
 function saveMemento() {
-  /* Maybe enable later?
-  const data = {
-    overrides: Array.from(overrides.entries()),
-    inventory,
-  };
-  localStorage.setItem("d3_state", JSON.stringify(data));
-  */
+  // In-memory only: remember the last snapshot
+  lastMemento = serializeState();
 }
 
 function loadMemento() {
-  /* Maybe enable later? */
-  /*
-  const raw = localStorage.getItem("d3_state");
-  if (!raw) return;
-  try {
-    const data = JSON.parse(raw) as {
-      overrides: [string, number][];
-      inventory: { value: number } | null;
-    };
-    overrides.clear();
-    for (const [kk, v] of data.overrides) overrides.set(kk, v);
-    inventory = data.inventory;
-  } catch {
-    // ignore corrupt state
-  }
-  */
+  if (!lastMemento) return;
+  restoreFromMemento(lastMemento);
 }
 
 // =======================
@@ -485,6 +492,8 @@ function initMap() {
   }
 
   function syncGridToPlayerWindow() {
+    saveMemento();
+
     const { minRow, maxRow, minCol, maxCol } = playerVisibleCellRange();
 
     const stale = new Set(visibleCells.keys());
