@@ -61,9 +61,9 @@ off-screen cells. Key gameplay challenge: Cells remember their modified state ev
       CellKey stringifier.
 - [x] Create an in-memory Map<CellKey, TokenState> store for modified cells only (unmodified
       cells derive from luck ).
-- [ ] Refactor viewport renderer to be purely flyweight: rebuild visible cell views from the store each
+- [x] Refactor viewport renderer to be purely flyweight: rebuild visible cell views from the store each
       moveend without retaining off-screen views.
-- [ ] Implement write-through mutations: on pickup/merge/place, update the store (add/update/
+- [x] Implement write-through mutations: on pickup/merge/place, update the store (add/update/
       remove -entries) and refresh only affected views.
 - [ ] Add an in-memory Memento (serialize/deserialize functions) for the store; call it when pages of
       cells enter/exit the viewport.

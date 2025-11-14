@@ -98,8 +98,6 @@ class CellView {
   label: L.Marker | null = null;
   row: number;
   col: number;
-  value: number = 0;
-  inRange: boolean = false;
 
   constructor(
     row: number,
@@ -110,6 +108,8 @@ class CellView {
   ) {
     this.row = row;
     this.col = col;
+    this.map = map;
+
     this.rect = L.rectangle(cellBounds(row, col), {
       pane,
       renderer: canvasRenderer,
@@ -117,16 +117,12 @@ class CellView {
       interactive: true,
     });
     this.rect.addTo(layerGroup);
-    this.map = map;
-    // Handle clicks
-    this.rect.on("click", () => {
-      handleCellClick(this.row, this.col);
-    });
-  }
-  setValue(value: number, rangeOK: boolean, layerGroup: L.LayerGroup) {
-    this.value = value;
-    this.inRange = rangeOK;
 
+    this.rect.on("click", () => handleCellClick(this.row, this.col));
+  }
+
+  // purely visual, no state stored
+  setVisual(value: number, rangeOK: boolean, layerGroup: L.LayerGroup) {
     const color = value === 0
       ? "#000000"
       : value === 2
@@ -144,12 +140,11 @@ class CellView {
       : "#000000";
 
     this.rect.setStyle({
-      color: color,
+      color,
       opacity: rangeOK ? 0.9 : 0.25,
       fillOpacity: value > 0 ? (rangeOK ? 0.18 : 0.08) : 0.04,
     });
 
-    // Label(DivIcon) - create only for >0 values else remove if present
     const bounds = cellBounds(this.row, this.col);
     const center = this.pixelCenterOfBounds(bounds);
 
@@ -488,16 +483,15 @@ function initMap() {
       maxCol: playerCell.col + RENDER_RADIUS / 4,
     };
   }
-  // Create/update only what’s in the player window; remove cells that left it
+
   function syncGridToPlayerWindow() {
     const { minRow, maxRow, minCol, maxCol } = playerVisibleCellRange();
 
-    // mark existing as stale initially
     const stale = new Set(visibleCells.keys());
 
     for (let row = minRow; row <= maxRow; row++) {
       for (let col = minCol; col <= maxCol; col++) {
-        const kk = keyOf(row, col);
+        const kk = cellKeyFromRC(row, col);
         stale.delete(kk);
 
         let cv = visibleCells.get(kk);
@@ -505,22 +499,21 @@ function initMap() {
           cv = new CellView(row, col, GRID_PANE, gridLayer, map);
           visibleCells.set(kk, cv);
         } else {
-          cv.updateBounds(); // projection jitter safety
+          cv.updateBounds();
         }
 
         const val = getEffectiveValue(row, col);
         const rangeOK = inRange(row, col);
-        cv.setValue(val, rangeOK, gridLayer);
+        cv.setVisual(val, rangeOK, gridLayer);
       }
     }
 
-    // remove any cells that are now outside the player window
+    // destroy off-screen views and (optionally) forget their state
     for (const kk of stale) {
       const cv = visibleCells.get(kk)!;
       cv.destroy(gridLayer);
       visibleCells.delete(kk);
 
-      // MEMORYLESS: drop any overrides so this cell resets next time we see it
       if (MEMORYLESS) {
         tokenStore.delete(kk);
       }
@@ -536,7 +529,7 @@ function initMap() {
       const r = parseInt(rStr, 10);
       const c = parseInt(cStr, 10);
       const val = getEffectiveValue(r, c);
-      cv.setValue(val, inRange(r, c), gridLayer);
+      cv.setVisual(val, inRange(r, c), gridLayer);
     }
   }
 
@@ -556,7 +549,7 @@ function initMap() {
     const cv = visibleCells.get(kk);
     if (!cv) return;
     const val = getEffectiveValue(row, col);
-    cv.setValue(val, inRange(row, col), gridLayer);
+    cv.setVisual(val, inRange(row, col), gridLayer);
   }
 
   // cell click handler (separate from updateCell so scope stays correct)
@@ -569,9 +562,12 @@ function initMap() {
     if (!inventory) {
       if (cellVal > 0) {
         inventory = { value: cellVal };
+
+        // write-through: model
         setEffectiveValue(row, col, 0);
+
+        // HUD + view
         updateInventoryHUD();
-        saveMemento();
         updateCell(row, col);
         checkWin();
       }
@@ -584,26 +580,26 @@ function initMap() {
       const newVal = held * 2;
 
       if (MERGE_RESULT_IN_HAND) {
+        // clear cell, put new value in hand
         setEffectiveValue(row, col, 0);
         inventory = { value: newVal };
       } else {
+        // write merged value into the cell, clear hand
         setEffectiveValue(row, col, newVal);
         inventory = null;
       }
 
       updateInventoryHUD();
-      saveMemento();
-      updateCell(row, col); // <— only this cell changes visually
+      updateCell(row, col);
       checkWin();
       return;
     }
 
-    // place into empty cells
+    // C) Place into empty cell
     if (cellVal === 0) {
       setEffectiveValue(row, col, held);
       inventory = null;
       updateInventoryHUD();
-      saveMemento();
       updateCell(row, col);
     }
   };
