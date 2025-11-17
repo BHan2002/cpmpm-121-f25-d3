@@ -40,6 +40,13 @@ interface MovementController {
   stepBy?: (dx: number, dy: number) => void;
 }
 
+type MovementMode = "buttons" | "geo";
+
+let currentMovementMode: MovementMode = USE_GEOLOCATION ? "geo" : "buttons";
+
+const STORAGE_KEY = "world-of-bits-state";
+const STORAGE_VERSION = 1;
+
 // Only store cells that have been modified by the player.
 // Unmodified cells derive from baseTokenValue(row, col)
 type TokenState = { v: number };
@@ -51,6 +58,8 @@ type Memento = {
   tokens: [CellKey, TokenState][];
   inventory: { value: number } | null;
   playerCell: GridCell;
+  movementMode?: MovementMode;
+  target?: number;
 };
 
 let lastMemento: Memento | null = null;
@@ -60,6 +69,8 @@ function serializeState(): Memento {
     tokens: Array.from(tokenStore.entries()),
     inventory: inventory ? { value: inventory.value } : null,
     playerCell: { row: playerCell.row, col: playerCell.col },
+    movementMode: currentMovementMode,
+    target: TARGET,
   };
 }
 
@@ -70,6 +81,63 @@ function restoreFromMemento(m: Memento) {
   }
   inventory = m.inventory ? { value: m.inventory.value } : null;
   playerCell = { row: m.playerCell.row, col: m.playerCell.col };
+  if (m.movementMode) {
+    currentMovementMode = m.movementMode;
+  }
+}
+
+let saveTimer: number | undefined;
+
+function saveState() {
+  try {
+    const snapshot = serializeState();
+    const payload = {
+      version: STORAGE_VERSION,
+      snapshot,
+    };
+    const json = JSON.stringify(payload);
+
+    // Size guard (~200KB)
+    if (json.length > 200_000) {
+      console.warn("Save skipped: payload too large", json.length);
+      return;
+    }
+
+    localStorage.setItem(STORAGE_KEY, json);
+  } catch (err) {
+    console.warn("Failed to save state", err);
+  }
+}
+
+function scheduleStateSave() {
+  if (saveTimer !== undefined) return;
+  saveTimer = globalThis.setTimeout(() => {
+    saveTimer = undefined;
+    saveState();
+  }, 250);
+}
+
+function loadState(): Memento | null {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return null;
+
+    const payload = JSON.parse(raw);
+    if (!payload || payload.version !== STORAGE_VERSION || !payload.snapshot) {
+      return null;
+    }
+
+    const snapshot = payload.snapshot as Memento;
+
+    if (!Array.isArray(snapshot.tokens) || !snapshot.playerCell) {
+      return null;
+    }
+
+    return snapshot;
+  } catch (err) {
+    console.warn("Failed to load state, ignoring", err);
+    return null;
+  }
 }
 
 // =======================
@@ -296,13 +364,16 @@ function checkWin() {
 }
 
 function saveMemento() {
-  // In-memory only: remember the last snapshot
+  // In-memory only + schedule a debounced write to localStorage
   lastMemento = serializeState();
+  scheduleStateSave();
 }
 
 function loadMemento() {
-  if (!lastMemento) return;
-  restoreFromMemento(lastMemento);
+  const loaded = loadState();
+  if (!loaded) return;
+  lastMemento = loaded;
+  restoreFromMemento(loaded);
 }
 
 // =======================
@@ -651,7 +722,7 @@ function initMap() {
   let redrawTimer: number | undefined;
   function scheduleSync() {
     if (redrawTimer) return;
-    redrawTimer = self.setTimeout(() => {
+    redrawTimer = globalThis.setTimeout(() => {
       redrawTimer = undefined;
       syncGridToPlayerWindow();
     }, 16); // ~1 frame
@@ -727,32 +798,67 @@ function initMap() {
   const player = new PlayerLayer(map);
   const badge = ensureHudBadge();
 
-  let movement: MovementController;
-
-  if (USE_GEOLOCATION) {
-    movement = new GeolocationMovementController(player, badge);
-  } else {
-    // convert your current playerCell { row, col } to GridCell { row, col }
-    const initialCell: GridCell = {
-      row: playerCell.row,
-      col: playerCell.col,
-    };
-    movement = new ButtonMovementController(map, player, badge, initialCell);
-  }
-
-  // Update playerCell when controller reports a new position and refresh the grid
-  movement.onPosition((lat: number, lng: number) => {
+  // Shared callback: how the *game* responds to movement updates
+  const handleMovementPosition = (lat: number, lng: number) => {
+    // Update logical grid position from lat/lng
     playerCell = latLngToCell(lat, lng);
 
     // Resync rendered grid to the new playerCell
     syncGridToPlayerWindow();
     refreshVisibleCells();
-    // Win state doesn’t actually depend on position, but safe to call here
     checkWin();
-  });
+  };
 
-  if (movement.stepBy) {
-    // D-pad control (Leaflet Control)
+  // Create both controllers up front
+  const initialCell: GridCell = { row: playerCell.row, col: playerCell.col };
+
+  const buttonMovement = new ButtonMovementController(
+    map,
+    player,
+    badge,
+    initialCell,
+  );
+  buttonMovement.onPosition(handleMovementPosition);
+
+  // Active controller pointer
+  let currentMovementMode: "geo" | "buttons" = USE_GEOLOCATION
+    ? "geo"
+    : "buttons";
+  const geoMovement = new GeolocationMovementController(player, badge);
+  geoMovement.onPosition(handleMovementPosition);
+
+  let activeMovement: MovementController = currentMovementMode === "geo"
+    ? geoMovement
+    : buttonMovement;
+
+  // D-pad control handle (created later)
+  let moveCtl: L.Control | null = null;
+
+  function useMovement(next: MovementController) {
+    if (activeMovement === next) return;
+
+    activeMovement.stop();
+    activeMovement = next;
+    currentMovementMode = next === geoMovement ? "geo" : "buttons";
+
+    // Toggle D-pad visibility
+    if (moveCtl) {
+      if (activeMovement === buttonMovement) {
+        map.addControl(moveCtl);
+      } else {
+        map.removeControl(moveCtl);
+      }
+    }
+
+    activeMovement.start();
+    saveMemento();
+  }
+
+  // Kick off whichever is active on load
+  activeMovement.start();
+
+  // D-pad control (for button-based movement)
+  if (buttonMovement.stepBy) {
     const MoveControl = L.Control.extend({
       onAdd: function () {
         const div = L.DomUtil.create("div", "leaflet-bar");
@@ -762,7 +868,7 @@ function initMap() {
         div.style.boxShadow = "0 2px 6px rgba(0,0,0,0.2)";
         div.style.userSelect = "none";
 
-        const makeBtn = (label: string, onClick: () => void) => {
+        const makeBtn = (label: string, di: number, dj: number) => {
           const b = document.createElement("button");
           b.type = "button";
           b.textContent = label;
@@ -779,33 +885,19 @@ function initMap() {
           L.DomEvent.disableClickPropagation(b);
           b.addEventListener("click", (e) => {
             e.preventDefault();
-            movement.stepBy?.(
-              onClick === north
-                ? 0
-                : onClick === west
-                ? -1
-                : onClick === east
-                ? 1
-                : 0,
-              onClick === north ? 1 : onClick === south ? -1 : 0,
-            );
+            buttonMovement.stepBy?.(di, dj);
           });
           return b;
         };
 
-        const north = () => movement.stepBy?.(0, 1);
-        const south = () => movement.stepBy?.(0, -1);
-        const west = () => movement.stepBy?.(-1, 0);
-        const east = () => movement.stepBy?.(1, 0);
-
-        div.appendChild(makeBtn("N", north));
+        div.appendChild(makeBtn("N", 0, 1));
         const row = document.createElement("div");
         row.style.display = "flex";
         row.style.gap = "4px";
         row.style.justifyContent = "center";
-        row.appendChild(makeBtn("W", west));
-        row.appendChild(makeBtn("S", south));
-        row.appendChild(makeBtn("E", east));
+        row.appendChild(makeBtn("W", -1, 0));
+        row.appendChild(makeBtn("S", 0, -1));
+        row.appendChild(makeBtn("E", 1, 0));
         div.appendChild(row);
 
         L.DomEvent.disableClickPropagation(div);
@@ -815,11 +907,66 @@ function initMap() {
     });
 
     // deno-lint-ignore no-explicit-any
-    const moveCtl = new (MoveControl as any)({ position: "bottomright" });
-    map.addControl(moveCtl);
+    moveCtl = new (MoveControl as any)({ position: "bottomright" });
+
+    // Only show D-pad when we’re in button mode
+    if (activeMovement === buttonMovement && moveCtl) {
+      map.addControl(moveCtl);
+    }
   }
 
-  movement.start();
+  // Mode toggle control: hot-swap between Button + Geo controllers
+  const ModeToggleControl = L.Control.extend({
+    onAdd: function () {
+      const div = L.DomUtil.create("div", "leaflet-bar");
+      div.style.background = "#fff";
+      div.style.padding = "4px";
+      div.style.borderRadius = "8px";
+      div.style.boxShadow = "0 2px 6px rgba(0,0,0,0.2)";
+      div.style.userSelect = "none";
+
+      const btn = document.createElement("button");
+      btn.type = "button";
+      Object.assign(btn.style, {
+        display: "block",
+        padding: "4px 8px",
+        border: "1px solid #ccc",
+        borderRadius: "6px",
+        background: "#f7f7f7",
+        cursor: "pointer",
+        font: "11px system-ui, -apple-system, Segoe UI, Roboto, sans-serif",
+        whiteSpace: "nowrap",
+      } as CSSStyleDeclaration);
+
+      const updateLabel = () => {
+        btn.textContent = activeMovement === buttonMovement
+          ? "Mode: Buttons"
+          : "Mode: Geolocation";
+      };
+
+      btn.addEventListener("click", (e) => {
+        e.preventDefault();
+        // Toggle between controllers
+        if (activeMovement === buttonMovement) {
+          useMovement(geoMovement);
+        } else {
+          useMovement(buttonMovement);
+        }
+        updateLabel();
+      });
+
+      updateLabel();
+      div.appendChild(btn);
+
+      L.DomEvent.disableClickPropagation(div);
+      return div;
+    },
+    onRemove: function () {},
+  });
+
+  // deno-lint-ignore no-explicit-any
+  const modeCtl = new (ModeToggleControl as any)({ position: "topright" });
+  map.addControl(modeCtl);
 }
 
 // Kick off AFTER everything is defined

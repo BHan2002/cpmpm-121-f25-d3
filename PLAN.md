@@ -99,8 +99,8 @@ Key gameplay challenge: Let players walk around in reality to move in game, resu
 - [x] Define a movement facade: `interface MovementController { start(): void; stop(): void; onPosition(cb: (lat:number, lng:number)=>void): void; stepBy?(di:number, dj:number): void }`.
 - [x] Implement `ButtonMovementController` (adapts existing N/S/E/W UI to `MovementController`).
 - [x] Implement `GeolocationMovementController` using `navigator.geolocation.getCurrentPosition` + `watchPosition`, with options `{ enableHighAccuracy: true, maximumAge: 2000 }`, permission handling, and fallback on errors.
-- [ ] Add an on‑screen toggle that hot‑swaps controllers without touching grid logic.
-- [ ] Persist state to `localStorage` (versioned schema): player cell/latLng, inventory, modified‑cells store (`Map<CellKey, TokenState>` serialized to array), movement mode, and settings (e.g., target value).
-- [ ] Implement `saveState()` (debounced) + `loadState()` with schema versioning and size guard; auto‑resume on load, else initialize from deterministic seed.
+- [x] Add an on‑screen toggle that hot‑swaps controllers without touching grid logic.
+- [x] Persist state to `localStorage` (versioned schema): player cell/latLng, inventory, modified‑cells store (`Map<CellKey, TokenState>` serialized to array), movement mode, and settings (e.g., target value).
+- [x] Implement `saveState()` (debounced) + `loadState()` with schema versioning and size guard; auto‑resume on load, else initialize from deterministic seed.
 - [ ] Add a **New Game** control: confirm → clear saved state → reinitialize world/inventory → redraw.
 - [ ] Add a subtle “resumed from save” banner/toast on load and a “geo denied, using buttons” notice on fallback.
