@@ -19,10 +19,10 @@ const CLASSROOM = {
 const CELL_DEG = 0.000125; // ~13.9m at this latitude
 const INTERACT_RANGE = 3; // cells (Chebyshev distance)
 const TARGET = 64; // win threshold
-const USE_GEOLOCATION = false;
+const USE_GEOLOCATION = true;
 const MERGE_RESULT_IN_HAND = true;
-const RENDER_RADIUS = INTERACT_RANGE + 6;
 const MEMORYLESS = true;
+const VIEW_RADIUS = INTERACT_RANGE + 5;
 
 // --- Cell identity & keys ---
 type GridCell = { row: number; col: number };
@@ -45,7 +45,7 @@ type MovementMode = "buttons" | "geo";
 let currentMovementMode: MovementMode = USE_GEOLOCATION ? "geo" : "buttons";
 
 const STORAGE_KEY = "world-of-bits-state";
-const STORAGE_VERSION = 1;
+const STORAGE_VERSION = 3;
 
 // Only store cells that have been modified by the player.
 // Unmodified cells derive from baseTokenValue(row, col)
@@ -159,7 +159,7 @@ function cellBounds(row: number, col: number): L.LatLngBounds {
   return L.latLngBounds([south, west], [north, east]);
 }
 
-let playerCell = latLngToCell(CLASSROOM.lat, CLASSROOM.lng); // NEW
+let playerCell = latLngToCell(CLASSROOM.lat, CLASSROOM.lng);
 function inRange(row: number, col: number): boolean {
   const dr = Math.abs(row - playerCell.row);
   const dc = Math.abs(col - playerCell.col);
@@ -167,7 +167,7 @@ function inRange(row: number, col: number): boolean {
 }
 
 // Helper: center of a grid cell (lat/lng)
-function cellCenterLatLng(row: number, col: number): L.LatLng { // NEW
+function cellCenterLatLng(row: number, col: number): L.LatLng {
   return cellBounds(row, col).getCenter();
 }
 
@@ -469,6 +469,7 @@ class PlayerLayer {
       this.map.removeLayer(this.accuracy);
       this.accuracy = null;
     }
+    // center on player
     if (this.firstFix) {
       this.map.setView(pos, CLASSROOM.zoom);
       this.firstFix = false;
@@ -532,7 +533,9 @@ class ButtonMovementController implements MovementController {
     this.badge = badge;
     this.currentCell = initialCell;
   }
-
+  setCell(cell: GridCell) {
+    this.currentCell = { row: cell.row, col: cell.col };
+  }
   onPosition(callback: (lat: number, lng: number) => void): void {
     this.inPosition = callback;
   }
@@ -543,7 +546,13 @@ class ButtonMovementController implements MovementController {
       this.currentCell.col,
     );
     this.player.showFixed(centerLL);
+    this.badge.textContent =
+      `Player: simulated @ cell (${this.currentCell.row}, ${this.currentCell.col})`;
+
+    // Notify game logic of the initial pos
+    this.inPosition?.(centerLL.lat, centerLL.lng);
   }
+
   stop(): void {
     // No-op for button controller
   }
@@ -573,47 +582,56 @@ class GeolocationMovementController implements MovementController {
   private onPositionCallback: ((lat: number, lng: number) => void) | null =
     null;
   private watchId: number | null = null;
-  private started: boolean = false;
 
   constructor(player: PlayerLayer, badge: HTMLElement) {
     this.player = player;
     this.badge = badge;
   }
+
   onPosition(callback: (lat: number, lng: number) => void): void {
     this.onPositionCallback = callback;
   }
+
   start(): void {
     if (!("geolocation" in navigator)) {
-      // Hard fallback to classroom location
       this.badge.textContent =
         "Geolocation unavailable — using classroom location";
-      this.player.showFixed([CLASSROOM.lat, CLASSROOM.lng]);
+      const ll: [number, number] = [CLASSROOM.lat, CLASSROOM.lng];
+      this.player.showFixed(ll);
       this.onPositionCallback?.(CLASSROOM.lat, CLASSROOM.lng);
       return;
     }
+
     this.badge.textContent = "Player: geolocation (awaiting fix…)";
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        this.badge.textContent = "Player: geolocation";
-        this.player.showFixed([pos.coords.latitude, pos.coords.longitude]);
-        this.onPositionCallback?.(pos.coords.latitude, pos.coords.longitude);
-      },
-      (_err) => {
-        this.badge.textContent = "Geolocation error — using classroom location";
-        this.player.showFixed([CLASSROOM.lat, CLASSROOM.lng]);
-        this.onPositionCallback?.(CLASSROOM.lat, CLASSROOM.lng);
-      },
-    );
+
     this.watchId = navigator.geolocation.watchPosition(
       (pos) => {
-        this.badge.textContent = "Player: geolocation (tracking)";
+        const lat = pos.coords.latitude;
+        const lng = pos.coords.longitude;
+
+        // Visually: use the *real* geolocation
         this.player.showGeo(pos);
-        this.onPositionCallback?.(pos.coords.latitude, pos.coords.longitude);
+
+        // Game logic: use real-world lat/lng; the grid math happens in latLngToCell
+        this.onPositionCallback?.(lat, lng);
+
+        this.badge.textContent = "Player: geolocation (tracking)";
       },
-      undefined,
-      { enableHighAccuracy: true, maximumAge: 2000 },
+      (err) => {
+        console.warn("Geolocation error:", err);
+        this.badge.textContent = "Geolocation error — using classroom location";
+        const ll: [number, number] = [CLASSROOM.lat, CLASSROOM.lng];
+        this.player.showFixed(ll);
+        this.onPositionCallback?.(CLASSROOM.lat, CLASSROOM.lng);
+      },
+      {
+        enableHighAccuracy: true,
+        maximumAge: 1000,
+        timeout: 10000,
+      },
     );
   }
+
   stop(): void {
     if (this.watchId !== null) {
       navigator.geolocation.clearWatch(this.watchId);
@@ -621,6 +639,7 @@ class GeolocationMovementController implements MovementController {
     }
   }
 }
+
 // =======================
 // Init map (now that all deps exist)
 // =======================
@@ -660,14 +679,23 @@ function initMap() {
     minCol: number;
     maxCol: number;
   } {
+    // Use the leaflet viewport bounds instead of a tiny radius around the player
+    const bounds = map.getBounds();
+    const sw = bounds.getSouthWest();
+    const ne = bounds.getNorthEast();
+
+    // Convert the corners of the viewport to grid cells
+    const swCell = latLngToCell(sw.lat, sw.lng);
+    const neCell = latLngToCell(ne.lat, ne.lng);
+
+    // Expand by a 1-cell margin so we don't thrash at the edges
     return {
-      minRow: playerCell.row - RENDER_RADIUS / 4,
-      maxRow: playerCell.row + RENDER_RADIUS / 4,
-      minCol: playerCell.col - RENDER_RADIUS / 4,
-      maxCol: playerCell.col + RENDER_RADIUS / 4,
+      minRow: (swCell.row + VIEW_RADIUS),
+      maxRow: (neCell.row - VIEW_RADIUS),
+      minCol: (swCell.col + VIEW_RADIUS + 17),
+      maxCol: (neCell.col - VIEW_RADIUS - 17),
     };
   }
-
   function syncGridToPlayerWindow() {
     saveMemento();
 
@@ -801,7 +829,8 @@ function initMap() {
   // Shared callback: how the *game* responds to movement updates
   const handleMovementPosition = (lat: number, lng: number) => {
     // Update logical grid position from lat/lng
-    playerCell = latLngToCell(lat, lng);
+    const cc = latLngToCell(lat, lng);
+    playerCell = cc;
 
     // Resync rendered grid to the new playerCell
     syncGridToPlayerWindow();
@@ -821,9 +850,6 @@ function initMap() {
   buttonMovement.onPosition(handleMovementPosition);
 
   // Active controller pointer
-  let currentMovementMode: "geo" | "buttons" = USE_GEOLOCATION
-    ? "geo"
-    : "buttons";
   const geoMovement = new GeolocationMovementController(player, badge);
   geoMovement.onPosition(handleMovementPosition);
 
@@ -837,6 +863,9 @@ function initMap() {
   function useMovement(next: MovementController) {
     if (activeMovement === next) return;
 
+    if (next === buttonMovement) {
+      buttonMovement.setCell(playerCell);
+    }
     activeMovement.stop();
     activeMovement = next;
     currentMovementMode = next === geoMovement ? "geo" : "buttons";
@@ -965,8 +994,64 @@ function initMap() {
   });
 
   // deno-lint-ignore no-explicit-any
-  const modeCtl = new (ModeToggleControl as any)({ position: "topright" });
+  const modeCtl = new (ModeToggleControl as any)({ position: "bottomleft" });
   map.addControl(modeCtl);
+  // New Game control: confirm → clear saved state → reload
+  const NewGameControl = L.Control.extend({
+    onAdd: function () {
+      const div = L.DomUtil.create("div", "leaflet-bar");
+      div.style.background = "#fff";
+      div.style.padding = "4px";
+      div.style.borderRadius = "8px";
+      div.style.boxShadow = "0 2px 6px rgba(0,0,0,0.2)";
+      div.style.userSelect = "none";
+
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.textContent = "New Game";
+      Object.assign(btn.style, {
+        display: "block",
+        padding: "4px 8px",
+        border: "1px solid #ccc",
+        borderRadius: "6px",
+        background: "#fbe9e7",
+        cursor: "pointer",
+        font: "11px system-ui, -apple-system, Segoe UI, Roboto, sans-serif",
+        whiteSpace: "nowrap",
+      } as CSSStyleDeclaration);
+
+      btn.addEventListener("click", (e) => {
+        e.preventDefault();
+        const ok = window.confirm(
+          "Start a new game? This will clear your saved progress.",
+        );
+        if (!ok) return;
+
+        try {
+          // Clear persisted state
+          localStorage.removeItem(STORAGE_KEY);
+
+          // Clear in-memory state
+          tokenStore.clear();
+          inventory = null;
+          lastMemento = null;
+          playerCell = latLngToCell(CLASSROOM.lat, CLASSROOM.lng);
+        } finally {
+          // Full re-init: reload the page
+          window.location.reload();
+        }
+      });
+
+      div.appendChild(btn);
+      L.DomEvent.disableClickPropagation(div);
+      return div;
+    },
+    onRemove: function () {},
+  });
+
+  // deno-lint-ignore no-explicit-any
+  const newGameCtl = new (NewGameControl as any)({ position: "bottomleft" });
+  map.addControl(newGameCtl);
 }
 
 // Kick off AFTER everything is defined

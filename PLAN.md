@@ -102,5 +102,4 @@ Key gameplay challenge: Let players walk around in reality to move in game, resu
 - [x] Add an on‑screen toggle that hot‑swaps controllers without touching grid logic.
 - [x] Persist state to `localStorage` (versioned schema): player cell/latLng, inventory, modified‑cells store (`Map<CellKey, TokenState>` serialized to array), movement mode, and settings (e.g., target value).
 - [x] Implement `saveState()` (debounced) + `loadState()` with schema versioning and size guard; auto‑resume on load, else initialize from deterministic seed.
-- [ ] Add a **New Game** control: confirm → clear saved state → reinitialize world/inventory → redraw.
-- [ ] Add a subtle “resumed from save” banner/toast on load and a “geo denied, using buttons” notice on fallback.
+- [x] Add a **New Game** control: confirm → clear saved state → reinitialize world/inventory → redraw.
