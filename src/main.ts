@@ -62,7 +62,7 @@ type Memento = {
   target?: number;
 };
 
-let lastMemento: Memento | null = null;
+let _lastMemento: Memento | null = null;
 
 function serializeState(): Memento {
   return {
@@ -365,14 +365,14 @@ function checkWin() {
 
 function saveMemento() {
   // In-memory only + schedule a debounced write to localStorage
-  lastMemento = serializeState();
+  _lastMemento = serializeState();
   scheduleStateSave();
 }
 
 function loadMemento() {
   const loaded = loadState();
   if (!loaded) return;
-  lastMemento = loaded;
+  _lastMemento = loaded;
   restoreFromMemento(loaded);
 }
 
@@ -1022,7 +1022,7 @@ function initMap() {
 
       btn.addEventListener("click", (e) => {
         e.preventDefault();
-        const ok = window.confirm(
+        const ok = globalThis.confirm(
           "Start a new game? This will clear your saved progress.",
         );
         if (!ok) return;
@@ -1034,11 +1034,11 @@ function initMap() {
           // Clear in-memory state
           tokenStore.clear();
           inventory = null;
-          lastMemento = null;
+          _lastMemento = null;
           playerCell = latLngToCell(CLASSROOM.lat, CLASSROOM.lng);
         } finally {
           // Full re-init: reload the page
-          window.location.reload();
+          globalThis.location.reload();
         }
       });
 
