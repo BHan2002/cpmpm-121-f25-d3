@@ -88,3 +88,19 @@ off-screen cells. Key gameplay challenge: Cells remember their modified state ev
 - Implement helper functions to convert between geographic coordinates and grid cell identifiers.
 - Use Leaflet’s `moveend` event to detect when the player (or map) stops moving: [Leaflet map.moveend docs](https://leafletjs.com/reference.html#map-moveend)
 - Keep rendering efficient by reusing cell objects and redrawing only when necessary.
+
+## D3.d: Gameplay Across Real‑world Space and Time
+
+Key technical challenge: Swap button movement for real‑world geolocation via a **Facade** so core game code stays independent of the input source, and persist state across reloads with `localStorage`.
+Key gameplay challenge: Let players walk around in reality to move in game, resume exactly where they left off, and toggle movement modes or start a new run.
+
+### D3.d Steps
+
+- [x] Define a movement facade: `interface MovementController { start(): void; stop(): void; onPosition(cb: (lat:number, lng:number)=>void): void; stepBy?(di:number, dj:number): void }`.
+- [x] Implement `ButtonMovementController` (adapts existing N/S/E/W UI to `MovementController`).
+- [x] Implement `GeolocationMovementController` using `navigator.geolocation.getCurrentPosition` + `watchPosition`, with options `{ enableHighAccuracy: true, maximumAge: 2000 }`, permission handling, and fallback on errors.
+- [ ] Add an on‑screen toggle that hot‑swaps controllers without touching grid logic.
+- [ ] Persist state to `localStorage` (versioned schema): player cell/latLng, inventory, modified‑cells store (`Map<CellKey, TokenState>` serialized to array), movement mode, and settings (e.g., target value).
+- [ ] Implement `saveState()` (debounced) + `loadState()` with schema versioning and size guard; auto‑resume on load, else initialize from deterministic seed.
+- [ ] Add a **New Game** control: confirm → clear saved state → reinitialize world/inventory → redraw.
+- [ ] Add a subtle “resumed from save” banner/toast on load and a “geo denied, using buttons” notice on fallback.

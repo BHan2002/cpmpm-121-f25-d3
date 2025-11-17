@@ -25,22 +25,20 @@ const RENDER_RADIUS = INTERACT_RANGE + 6;
 const MEMORYLESS = true;
 
 // --- Cell identity & keys ---
-type GridCell = { i: number; j: number };
+type GridCell = { row: number; col: number };
 type CellKey = string; // "row:col"
 
 function cellKeyFromRC(row: number, col: number): CellKey {
   return `${row}:${col}`;
 }
 
-/*function keyFromCell(c: GridCell): CellKey {
-  return `${c.i}:${c.j}`;
+// New interface for Movement Controller
+interface MovementController {
+  start(): void;
+  stop(): void;
+  onPosition(callback: (lat: number, lng: number) => void): void;
+  stepBy?: (dx: number, dy: number) => void;
 }
-
-function parseCellKey(key: CellKey): GridCell {
-  const [i, j] = key.split(":").map((n) => parseInt(n, 10));
-  return { i, j };
-}
-*/
 
 // Only store cells that have been modified by the player.
 // Unmodified cells derive from baseTokenValue(row, col)
@@ -61,7 +59,7 @@ function serializeState(): Memento {
   return {
     tokens: Array.from(tokenStore.entries()),
     inventory: inventory ? { value: inventory.value } : null,
-    playerCell: { i: playerCell.row, j: playerCell.col },
+    playerCell: { row: playerCell.row, col: playerCell.col },
   };
 }
 
@@ -71,7 +69,7 @@ function restoreFromMemento(m: Memento) {
     tokenStore.set(key, { v: state.v });
   }
   inventory = m.inventory ? { value: m.inventory.value } : null;
-  playerCell = { row: m.playerCell.i, col: m.playerCell.j };
+  playerCell = { row: m.playerCell.row, col: m.playerCell.col };
 }
 
 // =======================
@@ -444,6 +442,114 @@ function ensureHudBadge(): HTMLElement {
   return el;
 }
 
+// New Class for Button Movement Controller
+class ButtonMovementController implements MovementController {
+  private map: L.Map;
+  private player: PlayerLayer;
+  private badge: HTMLElement;
+  private currentCell: GridCell;
+  private inPosition: ((lat: number, lng: number) => void) | null = null;
+
+  constructor(
+    map: L.Map,
+    player: PlayerLayer,
+    badge: HTMLElement,
+    initialCell: GridCell,
+  ) {
+    this.map = map;
+    this.player = player;
+    this.badge = badge;
+    this.currentCell = initialCell;
+  }
+
+  onPosition(callback: (lat: number, lng: number) => void): void {
+    this.inPosition = callback;
+  }
+  start(): void {
+    // Draw player at initial cell
+    const centerLL = cellCenterLatLng(
+      this.currentCell.row,
+      this.currentCell.col,
+    );
+    this.player.showFixed(centerLL);
+  }
+  stop(): void {
+    // No-op for button controller
+  }
+  stepBy(dx: number, dy: number): void {
+    this.currentCell = {
+      row: this.currentCell.row + dy,
+      col: this.currentCell.col + dx,
+    };
+
+    // Update visuals and notify position callback after moving
+    const centerLL = cellCenterLatLng(
+      this.currentCell.row,
+      this.currentCell.col,
+    );
+    this.player.showFixed(centerLL);
+    this.map.panTo(centerLL, { animate: true });
+    this.badge.textContent =
+      `Player: simulated @ cell (${this.currentCell.row}, ${this.currentCell.col})`;
+    this.inPosition?.(centerLL.lat, centerLL.lng);
+  }
+}
+
+// Class for Geolocation Movement Controller
+class GeolocationMovementController implements MovementController {
+  private player: PlayerLayer;
+  private badge: HTMLElement;
+  private onPositionCallback: ((lat: number, lng: number) => void) | null =
+    null;
+  private watchId: number | null = null;
+  private started: boolean = false;
+
+  constructor(player: PlayerLayer, badge: HTMLElement) {
+    this.player = player;
+    this.badge = badge;
+  }
+  onPosition(callback: (lat: number, lng: number) => void): void {
+    this.onPositionCallback = callback;
+  }
+  start(): void {
+    if (!("geolocation" in navigator)) {
+      // Hard fallback to classroom location
+      this.badge.textContent =
+        "Geolocation unavailable — using classroom location";
+      this.player.showFixed([CLASSROOM.lat, CLASSROOM.lng]);
+      this.onPositionCallback?.(CLASSROOM.lat, CLASSROOM.lng);
+      return;
+    }
+    this.badge.textContent = "Player: geolocation (awaiting fix…)";
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        this.badge.textContent = "Player: geolocation";
+        this.player.showFixed([pos.coords.latitude, pos.coords.longitude]);
+        this.onPositionCallback?.(pos.coords.latitude, pos.coords.longitude);
+      },
+      (_err) => {
+        this.badge.textContent = "Geolocation error — using classroom location";
+        this.player.showFixed([CLASSROOM.lat, CLASSROOM.lng]);
+        this.onPositionCallback?.(CLASSROOM.lat, CLASSROOM.lng);
+      },
+    );
+    this.watchId = navigator.geolocation.watchPosition(
+      (pos) => {
+        this.badge.textContent = "Player: geolocation (tracking)";
+        this.player.showGeo(pos);
+        this.onPositionCallback?.(pos.coords.latitude, pos.coords.longitude);
+      },
+      undefined,
+      { enableHighAccuracy: true, maximumAge: 2000 },
+    );
+  }
+  stop(): void {
+    if (this.watchId !== null) {
+      navigator.geolocation.clearWatch(this.watchId);
+      this.watchId = null;
+    }
+  }
+}
 // =======================
 // Init map (now that all deps exist)
 // =======================
@@ -621,131 +727,99 @@ function initMap() {
   const player = new PlayerLayer(map);
   const badge = ensureHudBadge();
 
-  function movePlayer(dx: number, dy: number) {
-    // Only used in simulation mode; works either way but makes most sense when USE_GEOLOCATION=false
-    playerCell = { row: playerCell.row + dy, col: playerCell.col + dx };
+  let movement: MovementController;
 
-    // Move the player marker to the *center of the new cell*
-    const newLL = cellCenterLatLng(playerCell.row, playerCell.col);
-    player.showFixed(newLL);
-
-    // Keep camera on player (optional)
-    map.panTo(newLL, { animate: true });
-
-    // Update badge
-    const cellTxt = `(${playerCell.row}, ${playerCell.col})`;
-    badge.textContent = `Player: simulated @ cell ${cellTxt}`;
-
-    syncGridToPlayerWindow();
-
-    // Redraw grid styling for in-range state
-    refreshVisibleCells();
-  }
-
-  if (!USE_GEOLOCATION) {
-    badge.textContent =
-      `Player: simulated @ cell (${playerCell.row}, ${playerCell.col})`;
-    player.showFixed([CLASSROOM.lat, CLASSROOM.lng]);
-  } else if (!("geolocation" in navigator)) {
-    badge.textContent = "Geolocation unavailable — using classroom location";
-    player.showFixed([CLASSROOM.lat, CLASSROOM.lng]);
+  if (USE_GEOLOCATION) {
+    movement = new GeolocationMovementController(player, badge);
   } else {
-    badge.textContent = "Player: geolocation (awaiting fix…)";
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        badge.textContent = "Player: geolocation (fixed)";
-        player.showGeo(pos);
-      },
-      () => {
-        badge.textContent = "Geolocation denied — using classroom location";
-        player.showFixed([CLASSROOM.lat, CLASSROOM.lng]);
-      },
-      { enableHighAccuracy: true, timeout: 8000, maximumAge: 0 },
-    );
+    // convert your current playerCell { row, col } to GridCell { row, col }
+    const initialCell: GridCell = {
+      row: playerCell.row,
+      col: playerCell.col,
+    };
+    movement = new ButtonMovementController(map, player, badge, initialCell);
   }
 
-  badge.textContent = "Player: geolocation (awaiting fix…)";
-  navigator.geolocation.getCurrentPosition(
-    (pos) => {
-      badge.textContent = "Player: geolocation (fixed)";
-      player.showGeo(pos);
-    },
-    () => {
-      badge.textContent = "Geolocation denied — using classroom location";
-      player.showFixed([CLASSROOM.lat, CLASSROOM.lng]);
-    },
-    { enableHighAccuracy: true, timeout: 8000, maximumAge: 0 },
-  );
+  // Update playerCell when controller reports a new position and refresh the grid
+  movement.onPosition((lat: number, lng: number) => {
+    playerCell = latLngToCell(lat, lng);
 
-  navigator.geolocation.watchPosition(
-    (pos) => {
-      badge.textContent = "Player: geolocation (tracking)";
-      player.showGeo(pos);
-    },
-    undefined,
-    { enableHighAccuracy: true, maximumAge: 2000 },
-  );
-
-  checkWin();
-
-  // D-pad control (Leaflet Control) — NEW
-  const MoveControl = L.Control.extend({
-    onAdd: function () {
-      const div = L.DomUtil.create("div", "leaflet-bar");
-      div.style.background = "#fff";
-      div.style.padding = "6px";
-      div.style.borderRadius = "8px";
-      div.style.boxShadow = "0 2px 6px rgba(0,0,0,0.2)";
-      div.style.userSelect = "none";
-
-      const makeBtn = (label: string, onClick: () => void) => {
-        const b = document.createElement("button");
-        b.type = "button";
-        b.textContent = label;
-        Object.assign(b.style, {
-          display: "block",
-          width: "36px",
-          height: "28px",
-          margin: "2px auto",
-          border: "1px solid #ccc",
-          borderRadius: "6px",
-          background: "#f7f7f7",
-          cursor: "pointer",
-        } as CSSStyleDeclaration);
-        L.DomEvent.disableClickPropagation(b);
-        b.addEventListener("click", (e) => {
-          e.preventDefault();
-          onClick();
-        });
-        return b;
-      };
-
-      // Layout:
-      //   [ N ]
-      // [ W ][ S ][ E ]  (S in the middle row for compactness)
-      div.appendChild(makeBtn("N", () => movePlayer(0, 1)));
-      const row = document.createElement("div");
-      row.style.display = "flex";
-      row.style.gap = "4px";
-      row.style.justifyContent = "center";
-      row.appendChild(makeBtn("W", () => movePlayer(-1, 0)));
-      row.appendChild(makeBtn("S", () => movePlayer(0, -1)));
-      row.appendChild(makeBtn("E", () => movePlayer(1, 0)));
-      div.appendChild(row);
-
-      // Disable map drag when pressing on control
-      L.DomEvent.disableClickPropagation(div);
-      return div;
-    },
-    onRemove: function () {},
+    // Resync rendered grid to the new playerCell
+    syncGridToPlayerWindow();
+    refreshVisibleCells();
+    // Win state doesn’t actually depend on position, but safe to call here
+    checkWin();
   });
 
-  // deno-lint-ignore no-explicit-any
-  const moveCtl = new (MoveControl as any)({ position: "bottomright" });
-  map.addControl(moveCtl);
+  if (movement.stepBy) {
+    // D-pad control (Leaflet Control)
+    const MoveControl = L.Control.extend({
+      onAdd: function () {
+        const div = L.DomUtil.create("div", "leaflet-bar");
+        div.style.background = "#fff";
+        div.style.padding = "6px";
+        div.style.borderRadius = "8px";
+        div.style.boxShadow = "0 2px 6px rgba(0,0,0,0.2)";
+        div.style.userSelect = "none";
 
-  syncGridToPlayerWindow();
-  return map;
+        const makeBtn = (label: string, onClick: () => void) => {
+          const b = document.createElement("button");
+          b.type = "button";
+          b.textContent = label;
+          Object.assign(b.style, {
+            display: "block",
+            width: "36px",
+            height: "28px",
+            margin: "2px auto",
+            border: "1px solid #ccc",
+            borderRadius: "6px",
+            background: "#f7f7f7",
+            cursor: "pointer",
+          } as CSSStyleDeclaration);
+          L.DomEvent.disableClickPropagation(b);
+          b.addEventListener("click", (e) => {
+            e.preventDefault();
+            movement.stepBy?.(
+              onClick === north
+                ? 0
+                : onClick === west
+                ? -1
+                : onClick === east
+                ? 1
+                : 0,
+              onClick === north ? 1 : onClick === south ? -1 : 0,
+            );
+          });
+          return b;
+        };
+
+        const north = () => movement.stepBy?.(0, 1);
+        const south = () => movement.stepBy?.(0, -1);
+        const west = () => movement.stepBy?.(-1, 0);
+        const east = () => movement.stepBy?.(1, 0);
+
+        div.appendChild(makeBtn("N", north));
+        const row = document.createElement("div");
+        row.style.display = "flex";
+        row.style.gap = "4px";
+        row.style.justifyContent = "center";
+        row.appendChild(makeBtn("W", west));
+        row.appendChild(makeBtn("S", south));
+        row.appendChild(makeBtn("E", east));
+        div.appendChild(row);
+
+        L.DomEvent.disableClickPropagation(div);
+        return div;
+      },
+      onRemove: function () {},
+    });
+
+    // deno-lint-ignore no-explicit-any
+    const moveCtl = new (MoveControl as any)({ position: "bottomright" });
+    map.addControl(moveCtl);
+  }
+
+  movement.start();
 }
 
 // Kick off AFTER everything is defined
