@@ -704,10 +704,10 @@ function initMap() {
     const highCol = Math.max(swCell.col, neCell.col);
 
     return {
-      minRow: lowRow - VIEW_RADIUS + 13,
-      maxRow: highRow + VIEW_RADIUS - 13,
-      minCol: lowCol - VIEW_RADIUS + 25,
-      maxCol: highCol + VIEW_RADIUS - 25,
+      minRow: lowRow - VIEW_RADIUS,
+      maxRow: highRow + VIEW_RADIUS,
+      minCol: lowCol - VIEW_RADIUS,
+      maxCol: highCol + VIEW_RADIUS,
     };
   }
 
