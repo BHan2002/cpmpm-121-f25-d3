@@ -387,7 +387,7 @@ function ensureMapContainer(): HTMLElement {
   el.id = "map";
   // Use JS-driven height so mobile browser UI changes don’t cut off the map
   el.style.width = "100vw";
-  el.style.height = `${window.innerHeight}px`;
+  el.style.height = `${self.innerHeight}px`;
   document.body.style.margin = "0";
   document.body.appendChild(el);
   return el;
