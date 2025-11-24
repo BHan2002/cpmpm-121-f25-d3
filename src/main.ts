@@ -382,9 +382,12 @@ function loadMemento() {
 function ensureMapContainer(): HTMLElement {
   const existing = document.getElementById("map");
   if (existing) return existing;
+
   const el = document.createElement("div");
   el.id = "map";
-  Object.assign(el.style, { width: "100vw", height: "100vh" });
+  // Use JS-driven height so mobile browser UI changes don’t cut off the map
+  el.style.width = "100vw";
+  el.style.height = `${window.innerHeight}px`;
   document.body.style.margin = "0";
   document.body.appendChild(el);
   return el;
@@ -655,6 +658,15 @@ function initMap() {
     maxZoom: CLASSROOM.zoom,
   }).setView([CLASSROOM.lat, CLASSROOM.lng], CLASSROOM.zoom);
 
+  // Keep the map sized correctly on rotate / resize
+  const resize = () => {
+    container.style.height = `${self.innerHeight}px`;
+    map.invalidateSize();
+  };
+  self.addEventListener("resize", resize);
+  self.addEventListener("orientationchange", resize);
+  resize();
+
   L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
     maxZoom: 19,
     attribution:
@@ -679,23 +691,26 @@ function initMap() {
     minCol: number;
     maxCol: number;
   } {
-    // Use the leaflet viewport bounds instead of a tiny radius around the player
     const bounds = map.getBounds();
     const sw = bounds.getSouthWest();
     const ne = bounds.getNorthEast();
 
-    // Convert the corners of the viewport to grid cells
     const swCell = latLngToCell(sw.lat, sw.lng);
     const neCell = latLngToCell(ne.lat, ne.lng);
 
-    // Expand by a 1-cell margin so we don't thrash at the edges
+    const lowRow = Math.min(swCell.row, neCell.row);
+    const highRow = Math.max(swCell.row, neCell.row);
+    const lowCol = Math.min(swCell.col, neCell.col);
+    const highCol = Math.max(swCell.col, neCell.col);
+
     return {
-      minRow: (swCell.row + VIEW_RADIUS),
-      maxRow: (neCell.row - VIEW_RADIUS),
-      minCol: (swCell.col + VIEW_RADIUS + 17),
-      maxCol: (neCell.col - VIEW_RADIUS - 17),
+      minRow: lowRow - VIEW_RADIUS + 13,
+      maxRow: highRow + VIEW_RADIUS - 13,
+      minCol: lowCol - VIEW_RADIUS + 25,
+      maxCol: highCol + VIEW_RADIUS - 25,
     };
   }
+
   function syncGridToPlayerWindow() {
     saveMemento();
 
